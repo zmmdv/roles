@@ -1,0 +1,251 @@
+- name: Apt update to refresh repos
+  apt:
+    update_cache: yes
+     
+
+- name: Copy THP config Debian
+  template:
+    src: debian_thp.conf.j2
+    dest: /etc/systemd/system/disable-transparent-huge-pages.service
+
+
+- name: Start thp service
+  systemd:
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+    name: disable-transparent-huge-pages
+
+#################################################################################################
+#################################################################################################
+#################################################################################################
+
+- name: Add every machine to /etc/hosts to bypass ip providing
+  lineinfile:
+    dest: /etc/hosts
+    line: "{{ hostvars[item].ansible_host }}     {{ hostvars[item].inventory_hostname_short }}"
+    state: present
+  with_items: "{{ groups.all }}"
+
+- name: disable swap
+  command: /usr/sbin/swapoff -a
+  when: ansible_swaptotal_mb > 0
+
+
+- name: Disabling swap
+  lineinfile:
+    path: /etc/fstab
+    state: absent
+    regexp: '/swap.img'
+
+- name: Tuning kernel for mongodb (vm.swappiness)
+  sysctl:
+    name: vm.swappiness
+    value: '0'
+    state: present
+    ignoreerrors: yes
+    sysctl_set: yes
+
+- name: Reboot all machines
+  reboot:
+    msg: Reboot after swap and selinux
+
+#################################################################################################
+#################################################################################################
+#################################################################################################
+
+- name: Create Volume group for Mongodb
+  lvg:
+    vg: mongodb
+    pvs: "{{ disk_path }}"
+
+- name: Create logical volume for mongodb
+  lvol:
+    vg: mongodb
+    lv: mongodb
+    size: 100%FREE
+
+- name: Format mongodb logical volume with xfs filesystem
+  filesystem:
+    dev: /dev/mapper/mongodb-mongodb
+    fstype: xfs
+
+- name: Create mongodb directory
+  file:
+    path: /var/lib/mongodb
+    state: directory
+
+- name: Mount mongodb logical volume
+  mount:
+    path: /var/lib/mongodb
+    src: /dev/mapper/mongodb-mongodb
+    fstype: xfs
+    state: mounted
+
+#################################################################################################
+#################################################################################################
+#################################################################################################
+
+- name: Ufw ports for Mongodb Ubuntu
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  with_items:
+    - '27017'
+  
+
+- name: Installing dependencies Ubuntu
+  package:
+    name: "{{ item }}"
+    state: present
+  with_items:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - python3-pip
+#  - net-tools
+  
+
+#################################################################################################
+#################################################################################################
+#################################################################################################
+
+- name: Add mongodb Apt signing key
+  apt_key:
+    url: https://www.mongodb.org/static/pgp/server-{{ mongodb_version }}.asc
+    state: present
+
+
+- name: Add mongodb repository into sources list
+  apt_repository:
+    repo: deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu bionic/mongodb-org/{{ mongodb_version }} multiverse
+    state: present
+
+
+- name: Run the equivalent of "apt-get update" as a separate step
+  apt:
+    update_cache: yes
+  
+
+- name: Install mongodb
+  package:
+    name: 
+      - mongodb-org
+      - mongodb-org-server
+      - mongodb-org-shell
+      - mongodb-org-mongos
+      - mongodb-org-tools
+    state: latest
+
+
+- name: Prevent mongodb from being upgraded
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  with_items:
+  - mongodb-org
+  - mongodb-org-server
+  - mongodb-org-shell
+  - mongodb-org-mongos
+  - mongodb-org-tools
+  
+
+#################################################################################################
+#################################################################################################
+#################################################################################################
+
+- name: Change owner for /var/lib/mongodb
+  file:
+    path: /var/lib/mongodb
+    state: directory
+    owner: mongodb
+    group: mongodb
+
+- name: create mongod keyfile
+  shell: |
+    openssl rand -base64 756 > ./mongodb/templates/mongo_key
+  delegate_to: localhost
+  connection: local
+  run_once: true
+
+- name: Create directory for mongodb_key
+  file:
+    path: /etc/mongodb
+    state: directory
+    owner: mongodb
+    group: mongodb
+
+- name: copy mongod key
+  copy:
+    src: ./templates/mongo_key
+    dest: /etc/mongodb/mongo_key
+    mode: 0600
+    owner: mongodb
+    group: mongodb
+    
+- name: start and enable mongod
+  systemd:
+    daemon_reload: yes
+    name: mongod
+    enabled: yes
+    state: started
+
+- name: Install bottle pymongo module
+  pip:
+    name: pymongo==3.12.3
+
+#################################################################################################
+#################################################################################################
+#################################################################################################
+
+- name: Create mongodb admin user
+  mongodb_user:
+    ssl: no
+    ssl_cert_reqs: CERT_NONE
+    login_host: "127.0.0.1"
+    database: admin
+    name: admin
+    roles: root
+    password: "{{ mongodb_admin_pass }}"
+  run_once: true      
+
+- name: Copy mongod config
+  template:
+    src: mongod.conf.j2
+    dest: /etc/mongod.conf
+    mode: 0644
+
+- name: Restart mongod after changing config
+  ansible.builtin.systemd:
+    state: restarted
+    name: mongod 
+
+- name: Create replicaset
+  mongodb_replicaset:
+    ssl: no
+    ssl_cert_reqs: CERT_NONE
+    login_host: "{{ ansible_default_ipv4.address }}"
+    login_user: admin
+    login_password: "{{ mongodb_admin_pass }}"
+    replica_set: "{{ mongodb_replicaset_name }}"
+    members: "{{ mongodb_replicaset_members }}"
+  run_once: true
+
+
+- name: Сreate Extra database users
+  mongodb_user:
+    ssl: no
+    ssl_cert_reqs: CERT_NONE
+    login_host: "{{ ansible_default_ipv4.address }}"
+    replica_set: "{{ mongodb_replicaset_name }}"
+    login_user: admin
+    login_password: "{{ mongodb_admin_pass }}"
+    database: "{{ item.database }}"
+    name: "{{ item.username }}"
+    password: "{{ item.password }}"
+    roles: "{{ item.roles }}"
+  run_once: true
+  with_items: "{{ mongodb_extra_dbs }}"

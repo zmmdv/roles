@@ -1,0 +1,23 @@
+- hosts: all
+  become: yes
+  tasks:
+
+  - name: Start prepare_os role
+    import_role:
+      name: os-prepare
+
+  - name: Install Node Exporter
+    import_role:
+      name: node-exporter
+
+  - name: Install redis on servers
+    import_role:
+      name: redis
+
+  - name: Redis configuration
+    import_role:
+      name: redis-config
+
+  - name: Redis create cluster
+    import_role:
+      name: redis-cluster-create

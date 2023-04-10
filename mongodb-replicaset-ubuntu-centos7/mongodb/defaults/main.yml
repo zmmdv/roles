@@ -1,0 +1,22 @@
+#second disk separated from os which will be formatted with xfs and mounted to /var/lib/mongodb to store data
+disk_path: /dev/sdb
+#mongodb version major and will be installed latest minor version
+mongodb_version: 4.4
+# replicaset name
+mongodb_replicaset_name: replicaset
+# password for admin user which has all access
+mongodb_admin_pass: 123456789
+# replica set member to make them available by ip not by hostnames in case if you don't have dns server
+mongodb_replicaset_members:
+- 192.168.60.111
+- 192.168.60.112
+- 192.168.60.113
+
+# extra databases which will be created automatically with bootstrap
+mongodb_extra_dbs:
+- database: test
+  username: test
+  password: 1234567
+  roles:
+  - db: test
+    role: dbOwner

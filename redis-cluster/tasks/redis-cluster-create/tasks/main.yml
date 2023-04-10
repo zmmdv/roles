@@ -1,0 +1,14 @@
+- name: Copy create command script
+  template:
+    src: create-cluster.sh.j2
+    dest: /root/create-cluster.sh
+    mode: u+x
+  run_once: true
+  tags: cluster-create
+
+- name: Create cluster
+  ansible.builtin.shell: sh /root/create-cluster.sh
+  args:
+    executable: /bin/bash
+  run_once: true
+  tags: cluster-create

@@ -1,0 +1,12 @@
+[all:vars]
+
+ansible_ssh_pass=123
+
+[all]
+
+node-1 ansible_host=192.168.60.31
+node-2 ansible_host=192.168.60.32
+node-3 ansible_host=192.168.60.33
+node-4 ansible_host=192.168.60.34
+node-5 ansible_host=192.168.60.35
+node-6 ansible_host=192.168.60.36

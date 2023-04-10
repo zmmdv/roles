@@ -1,0 +1,227 @@
+- name: create directory for new tuned profile config
+  file:
+    path: /etc/tuned/no-thp
+    state: directory
+
+- name: copy tuned config Centos
+  template:
+    src: etc_tuned_no-thp_tuned.conf.j2
+    dest: /etc/tuned/no-thp/tuned.conf
+
+- name: apply new tuned profile and defrag config
+  shell: |
+    /sbin/tuned-adm profile no-thp \
+    && /bin/echo never > /sys/kernel/mm/transparent_hugepage/defrag
+
+- name: configure no thp service
+  copy:
+    src: etc_systemd_system_disable-transparent-hugepages.service
+    dest: /etc/systemd/system/disable-transparent-hugepages.service
+
+- name: start and enable no thp service
+  systemd:
+    daemon_reload: yes
+    name: disable-transparent-hugepages
+    enabled: yes
+    state: started
+
+################################################################################################# 
+- name: Add every machine to /etc/hosts to bypass ip providing
+  lineinfile:
+    dest: /etc/hosts
+    line: "{{ hostvars[item].ansible_host }}     {{ hostvars[item].inventory_hostname_short }}"
+    state: present
+  with_items: "{{ groups.all }}"
+
+- name: Disable selinux
+  selinux:
+    state: disabled
+
+- name: disable swap
+  command: /usr/sbin/swapoff -a
+  when: ansible_swaptotal_mb > 0
+
+- name: remove swapfile from /etc/fstab
+  mount:
+    path: swap
+    fstype: swap
+    state: absent
+
+
+- name: Tuning kernel for mongodb (vm.swappiness)
+  sysctl:
+    name: vm.swappiness
+    value: '0'
+    state: present
+    ignoreerrors: yes
+    sysctl_set: yes
+
+- name: Reboot all machines
+  reboot:
+    msg: Reboot after swap and selinux
+#################################################################################################
+- name: Create Volume group for Mongodb
+  lvg:
+    vg: mongodb
+    pvs: "{{ disk_path }}"
+
+- name: Create logical volume for mongodb
+  lvol:
+    vg: mongodb
+    lv: mongodb
+    size: 100%FREE
+
+- name: Format mongodb logical volume with xfs filesystem
+  filesystem:
+    dev: /dev/mapper/mongodb-mongodb
+    fstype: xfs
+
+- name: Create mongodb directory
+  file:
+    path: /var/lib/mongo
+    state: directory
+
+- name: Mount mongodb logical volume
+  mount:
+    path: /var/lib/mongo
+    src: /dev/mapper/mongodb-mongodb
+    fstype: xfs
+    state: mounted
+#################################################################################################
+
+- name: Firewalld ports for Mongodb CentOS
+  firewalld:
+    port: "{{ item }}"
+    state: enabled
+    permanent: yes
+    immediate: yes
+  with_items:
+    - 27017/tcp
+
+
+#################################################################################################
+
+- name: add mongodb-org yum repo
+  yum_repository:
+    name: mongodb-org
+    description: MongoDB Repository
+    baseurl: https://repo.mongodb.org/yum/redhat/7/mongodb-org/{{ mongodb_version }}/x86_64/
+    gpgkey: https://www.mongodb.org/static/pgp/server-{{ mongodb_version }}.asc
+    gpgcheck: yes
+
+- name: Install mongodb
+  package:
+    name: 
+      - mongodb-org
+      - mongodb-org-server
+      - mongodb-org-shell
+      - mongodb-org-mongos
+      - mongodb-org-tools
+      - epel-release
+    state: latest
+
+- name: Install pip
+  package:
+    name: 
+      - python-pip
+    state: latest
+#################################################################################################
+
+- name: Change owner for /var/lib/mongodb
+  file:
+    path: /var/lib/mongodb
+    state: directory
+    owner: mongod
+    group: mongod
+
+- name: create mongod keyfile
+  shell: |
+    openssl rand -base64 756 > ./mongodb/templates/mongo_key
+  delegate_to: localhost
+  connection: local
+  run_once: true
+
+- name: Create directory for mongodb_key
+  file:
+    path: /etc/mongodb
+    state: directory
+    owner: mongod
+    group: mongod
+
+- name: copy mongod key
+  copy:
+    src: ./templates/mongo_key
+    dest: /etc/mongodb/mongo_key
+    mode: 0600
+    owner: mongod
+    group: mongod
+    
+- name: start and enable mongod
+  systemd:
+    daemon_reload: yes
+    name: mongod
+    enabled: yes
+    state: started
+
+- name: Install bottle pymongo module
+  pip:
+    name: pymongo
+
+- name: Create mongodb admin user
+  mongodb_user:
+    ssl: no
+    ssl_cert_reqs: CERT_NONE
+    login_host: "127.0.0.1"
+    database: admin
+    name: admin
+    roles: root
+    password: "{{ mongodb_admin_pass }}"
+  run_once: true      
+
+- name: Copy mongod config with replication
+  template:
+    src: mongod.conf.rhel.replication.j2
+    dest: /etc/mongod.conf
+    mode: 0644
+
+- name: Restart mongod after changing config
+  systemd:
+    state: restarted
+    name: mongod 
+
+- name: Create replicaset
+  mongodb_replicaset:
+    ssl: no
+    ssl_cert_reqs: CERT_NONE
+    login_host: "{{ ansible_default_ipv4.address }}"
+    login_user: admin
+    login_password: "{{ mongodb_admin_pass }}"
+    replica_set: "{{ mongodb_replicaset_name }}"
+    members: "{{ mongodb_replicaset_members }}"
+  run_once: true
+
+# - name: Copy mongod config with replication settings
+#   template:
+#     src: mongod.conf.rhel.replication.j2
+#     dest: /etc/mongod.conf
+#     mode: 0644
+
+# - name: Restart mongod after changing config
+#   systemd:
+#     state: restarted
+#     name: mongod 
+
+- name: create database users
+  mongodb_user:
+    ssl: no
+    ssl_cert_reqs: CERT_NONE
+    login_host: "{{ ansible_default_ipv4.address }}"
+    replica_set: "{{ mongodb_replicaset_name }}"
+    login_user: admin
+    login_password: "{{ mongodb_admin_pass }}"
+    database: "{{ item.database }}"
+    name: "{{ item.username }}"
+    password: "{{ item.password }}"
+    roles: "{{ item.roles }}"
+  run_once: true
+  with_items: "{{ mongodb_extra_dbs }}"    

@@ -1,0 +1,42 @@
+[all]
+testing-k8s-haproxy01 ansible_host=10.4.91.2
+testing-k8s-haproxy02 ansible_host=10.4.91.3
+
+testing-k8s-master01 ansible_host=10.4.91.11
+testing-k8s-master02 ansible_host=10.4.91.12
+testing-k8s-master03 ansible_host=10.4.91.13
+
+testing-k8s-worker01 ansible_host=10.4.91.41
+testing-k8s-worker02 ansible_host=10.4.91.42
+testing-k8s-worker03 ansible_host=10.4.91.43
+
+testing-k8s-etcd01 ansible_host=10.4.91.51
+testing-k8s-etcd02 ansible_host=10.4.91.52
+testing-k8s-etcd03 ansible_host=10.4.91.53
+
+[kubernetescluster:children]
+masternodes
+workernodes
+
+[keepalived:children]
+masternodes
+
+[haproxy:children]
+masternodes
+
+[masternodes]
+testing-k8s-master01
+testing-k8s-master02
+testing-k8s-master03
+
+# etcd cluster nodes
+[etcdcluster]
+testing-k8s-etcd01
+testing-k8s-etcd02
+testing-k8s-etcd03
+
+# kubernetes cluster worker nodes
+[workernodes]
+testing-k8s-worker01
+testing-k8s-worker02
+testing-k8s-worker03

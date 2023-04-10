@@ -1,0 +1,67 @@
+- name: Update all packages to their latest version
+  ansible.builtin.package:
+    name: "*"
+    state: latest
+  tags:
+  - never
+
+- name: Upgrade all apt packages
+  apt:
+    upgrade: dist
+  register: update
+  tags:
+  - never
+
+- name: reboot all machines
+  reboot:
+    msg: "Roobting machines and packages updating"
+  when: update.changed
+  tags:
+  - never
+
+- name: Install necessary packages to servers
+  ansible.builtin.package:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - gnupg2
+      - lsb-release
+      - wget
+      - net-tools
+    state: latest
+  tags:
+  - never
+
+- name: Copy THP config
+  template:
+    src: debian_thp.conf.j2
+    dest: /etc/systemd/system/disable-transparent-huge-pages.service
+  tags:
+  - never
+
+- name: Start thp service
+  systemd:
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+    name: disable-transparent-huge-pages
+  tags:
+  - never
+
+- name: Add a line to sysctl.conf
+  ansible.builtin.lineinfile:
+    path: /etc/sysctl.d/redis.conf
+    line: "{{ item }}"
+    create: yes
+  with_items:
+  - vm.overcommit_memory = 1
+  tags:
+  - never
+
+- name: Load kernel modules
+  shell: sysctl --system
+  args:
+    executable: /bin/bash
+  tags:
+  - never

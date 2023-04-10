@@ -1,0 +1,24 @@
+- name: copy mongod key
+  copy:
+    src: ./files/redis-archive-keyring.gpg
+    dest: /usr/share/keyrings/redis-archive-keyring.gpg
+    mode: 0644
+    owner: root
+    group: root
+  tags: repo
+
+- name: repo
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb jammy main"
+    state: present
+    update_cache: true
+  tags: repo
+
+- name: install redis
+  package:
+    name:
+      - redis={{ redis_main_version }}:{{ redis_full_version }}-1rl1~jammy1
+      - redis-tools={{ redis_main_version }}:{{ redis_full_version }}-1rl1~jammy1
+      - redis-server={{ redis_main_version }}:{{ redis_full_version }}-1rl1~jammy1
+  tags:
+  - install-redis
